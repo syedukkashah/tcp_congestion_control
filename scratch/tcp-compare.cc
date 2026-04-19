@@ -5,8 +5,6 @@
 #include "ns3/applications-module.h"
 #include "ns3/flow-monitor-helper.h"
 #include "ns3/ipv4-flow-classifier.h"
-#include "ns3/tcp-tahoe.h"
-#include "ns3/tcp-reno.h"
 
 #include <fstream>
 #include <iostream>
@@ -39,12 +37,12 @@ main(int argc, char* argv[])
     if (tcpVariant == "TcpTahoe")
     {
         Config::SetDefault("ns3::TcpL4Protocol::SocketType",
-                           TypeIdValue(TcpTahoe::GetTypeId()));
+                           TypeIdValue(TypeId::LookupByName("ns3::TcpTahoe")));
     }
     else if (tcpVariant == "TcpReno")
     {
         Config::SetDefault("ns3::TcpL4Protocol::SocketType",
-                           TypeIdValue(TcpReno::GetTypeId()));
+                           TypeIdValue(TypeId::LookupByName("ns3::TcpReno")));
     }
     else
     {
@@ -52,7 +50,7 @@ main(int argc, char* argv[])
         return 1;
     }
 
-    Config::SetDefault("ns3::DropTailQueue::MaxPackets", UintegerValue(20));
+    Config::SetDefault("ns3::DropTailQueue<Packet>::MaxSize", StringValue("20p"));
 
     NodeContainer nodes;
     nodes.Create(4);
