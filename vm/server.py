@@ -100,12 +100,12 @@ def simulate():
     out_dir = tempfile.mkdtemp(prefix="tcpsim_")
     try:
         cmd = [WAF, "--run",
-               f"scratch/tcp-sim --tcpVariant={variant_flag} --bandwidth={bandwidth} "
+               f"scratch/tcp-compare --tcpVariant={variant_flag} --bandwidth={bandwidth} "
                f"--delay={delay} --queueSize={queue_size} --duration={duration} "
                f"--outputDir={out_dir} --label={variant_key}"]
-        proc = subprocess.run(cmd, cwd=NS3_DIR, capture_output=True, text=True, timeout=180)
+        proc = subprocess.run(cmd, cwd=NS3_DIR, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=180)
         if proc.returncode != 0:
-            return jsonify({"error": "ns-3 failed", "stderr": proc.stderr[-2000:]}), 500
+            return jsonify({"error": "ns-3 failed", "stderr": proc.stderr.decode()[-2000:]}), 500
     except subprocess.TimeoutExpired:
         return jsonify({"error": "Timed out"}), 500
     except Exception as e:
@@ -133,12 +133,12 @@ def compare():
         out_dir = tempfile.mkdtemp(prefix="tcpsim_")
         try:
             cmd = [WAF, "--run",
-                   f"scratch/tcp-sim --tcpVariant={variant_flag} --bandwidth={bandwidth} "
+                   f"scratch/tcp-compare --tcpVariant={variant_flag} --bandwidth={bandwidth} "
                    f"--delay={delay} --queueSize={queue_size} --duration={duration} "
                    f"--outputDir={out_dir} --label={v}"]
-            proc = subprocess.run(cmd, cwd=NS3_DIR, capture_output=True, text=True, timeout=180)
+            proc = subprocess.run(cmd, cwd=NS3_DIR, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=180)
             if proc.returncode != 0:
-                return jsonify({"error": f"Failed for {v}", "stderr": proc.stderr[-1000:]}), 500
+                return jsonify({"error": f"Failed for {v}", "stderr": proc.stderr.decode()[-1000:]}), 500
         except Exception as e:
             return jsonify({"error": str(e)}), 500
         prefix = os.path.join(out_dir, v)
