@@ -10,161 +10,139 @@
 #include <iostream>
 #include <map>
 #include <string>
-
 using namespace ns3;
 
 static Ptr<OutputStreamWrapper> g_cwndStream;
 
-static void
-CwndTracer(Ptr<OutputStreamWrapper> stream, uint32_t oldCwnd, uint32_t newCwnd)
+static void CwndTracer(Ptr<OutputStreamWrapper> stream, uint32_t oldCwnd, uint32_t newCwnd)
 {
-    *stream->GetStream() << Simulator::Now().GetSeconds() << "," << newCwnd << std::endl;
+    *stream->GetStream() << Simulator::Now().GetSeconds() << "," << newCwnd << "\n";
 }
 
-int
-main(int argc, char* argv[])
+int main(int argc, char *argv[])
 {
-    std::string tcpVariant = "TcpTahoe";
-    std::string resultsFile = "results-tahoe.csv";
-    std::string cwndFile = "cwnd-tahoe.csv";
+    std::string tcpVariant = "ns3::TcpNewReno";
+    std::string bandwidth = "1Mbps";
+    std::string delay = "10ms";
+    uint32_t queueSize = 20;
+    double duration = 20.0;
+    std::string outputDir = ".";
+    std::string label = "newreno";
 
     CommandLine cmd;
-    cmd.AddValue("tcpVariant", "TcpTahoe or TcpReno", tcpVariant);
-    cmd.AddValue("resultsFile", "CSV output file", resultsFile);
-    cmd.AddValue("cwndFile", "CWND output file", cwndFile);
+    cmd.AddValue("tcpVariant", "TCP variant type id", tcpVariant);
+    cmd.AddValue("bandwidth", "Bottleneck bandwidth", bandwidth);
+    cmd.AddValue("delay", "Bottleneck delay", delay);
+    cmd.AddValue("queueSize", "Queue size (packets)", queueSize);
+    cmd.AddValue("duration", "Simulation duration", duration);
+    cmd.AddValue("outputDir", "Output directory", outputDir);
+    cmd.AddValue("label", "Output file prefix", label);
     cmd.Parse(argc, argv);
 
-    if (tcpVariant == "TcpTahoe")
-    {
-        Config::SetDefault("ns3::TcpL4Protocol::SocketType",
-                           TypeIdValue(TypeId::LookupByName("ns3::TcpTahoe")));
-    }
-    else if (tcpVariant == "TcpReno")
-    {
-        Config::SetDefault("ns3::TcpL4Protocol::SocketType",
-                           TypeIdValue(TypeId::LookupByName("ns3::TcpReno")));
-    }
-    else
-    {
-        std::cerr << "Use TcpTahoe or TcpReno" << std::endl;
-        return 1;
-    }
+    //set TCP variant
+    Config::SetDefault("ns3::TcpL4Protocol::SocketType", TypeIdValue(TypeId::LookupByName(tcpVariant)));
+    Config::SetDefault("ns3::TcpSocket::SegmentSize", UintegerValue(1024));
+    Config::SetDefault("ns3::TcpSocket::SndBufSize", UintegerValue(131072));
+    Config::SetDefault("ns3::TcpSocket::RcvBufSize", UintegerValue(131072));
 
-    Config::SetDefault("ns3::DropTailQueue<Packet>::MaxSize", StringValue("20p"));
-
+    //topology: n0(sender)--n1(r1)--n2(r2)--n3(receiver)
     NodeContainer nodes;
     nodes.Create(4);
 
-    Ptr<Node> sender = nodes.Get(0);
-    Ptr<Node> router1 = nodes.Get(1);
-    Ptr<Node> router2 = nodes.Get(2);
-    Ptr<Node> receiver = nodes.Get(3);
+    PointToPointHelper accessLink;
+    accessLink.SetDeviceAttribute("DataRate", StringValue("10Mbps"));
+    accessLink.SetChannelAttribute("Delay", StringValue("2ms"));
 
-    PointToPointHelper fastLink;
-    fastLink.SetDeviceAttribute("DataRate", StringValue("10Mbps"));
-    fastLink.SetChannelAttribute("Delay", StringValue("2ms"));
+    PointToPointHelper bottleneck;
+    bottleneck.SetDeviceAttribute("DataRate", StringValue(bandwidth));
+    bottleneck.SetChannelAttribute("Delay", StringValue(delay));
+    bottleneck.SetQueue("ns3::DropTailQueue", "MaxSize", StringValue(std::to_string(queueSize) + "p"));
 
-    PointToPointHelper bottleneckLink;
-    bottleneckLink.SetDeviceAttribute("DataRate", StringValue("1Mbps"));
-    bottleneckLink.SetChannelAttribute("Delay", StringValue("20ms"));
-
-    NetDeviceContainer dev01 = fastLink.Install(sender, router1);
-    NetDeviceContainer dev12 = bottleneckLink.Install(router1, router2);
-    NetDeviceContainer dev23 = fastLink.Install(router2, receiver);
+    NetDeviceContainer dev01 = accessLink.Install(nodes.Get(0), nodes.Get(1));
+    NetDeviceContainer dev12 = bottleneck.Install(nodes.Get(1), nodes.Get(2));
+    NetDeviceContainer dev23 = accessLink.Install(nodes.Get(2), nodes.Get(3));
 
     InternetStackHelper stack;
-    stack.Install(nodes);
+    stack.InstallAll();
 
     Ipv4AddressHelper address;
     address.SetBase("10.1.1.0", "255.255.255.0");
     Ipv4InterfaceContainer if01 = address.Assign(dev01);
 
     address.SetBase("10.1.2.0", "255.255.255.0");
-    Ipv4InterfaceContainer if12 = address.Assign(dev12);
+    address.Assign(dev12);
 
     address.SetBase("10.1.3.0", "255.255.255.0");
     Ipv4InterfaceContainer if23 = address.Assign(dev23);
 
     Ipv4GlobalRoutingHelper::PopulateRoutingTables();
 
-    uint16_t sinkPort = 8080;
-    Address sinkAddress(InetSocketAddress(if23.GetAddress(1), sinkPort));
+    uint16_t port = 9;
 
-    PacketSinkHelper sinkHelper("ns3::TcpSocketFactory",
-                                InetSocketAddress(Ipv4Address::GetAny(), sinkPort));
-    ApplicationContainer sinkApps = sinkHelper.Install(receiver);
-    sinkApps.Start(Seconds(0.0));
-    sinkApps.Stop(Seconds(20.0));
+    //sink on receiver
+    PacketSinkHelper sinkHelper("ns3::TcpSocketFactory", InetSocketAddress(Ipv4Address::GetAny(), port));
+    ApplicationContainer sinkApp = sinkHelper.Install(nodes.Get(3));
+    sinkApp.Start(Seconds(0.0));
+    sinkApp.Stop(Seconds(duration));
 
-    BulkSendHelper sourceHelper("ns3::TcpSocketFactory", sinkAddress);
+    //BulkSend on sender
+    BulkSendHelper sourceHelper("ns3::TcpSocketFactory", InetSocketAddress(if23.GetAddress(1), port));
     sourceHelper.SetAttribute("MaxBytes", UintegerValue(0));
-    ApplicationContainer sourceApps = sourceHelper.Install(sender);
-    sourceApps.Start(Seconds(1.0));
-    sourceApps.Stop(Seconds(20.0));
+    sourceHelper.SetAttribute("SendSize", UintegerValue(1024));
+    ApplicationContainer sourceApp = sourceHelper.Install(nodes.Get(0));
+    sourceApp.Start(Seconds(1.0));
+    sourceApp.Stop(Seconds(duration - 1.0));
 
+    //cwnd trace
+    std::string cwndPath = outputDir + "/" + label + "-cwnd.csv";
     AsciiTraceHelper ascii;
-    g_cwndStream = ascii.CreateFileStream(cwndFile);
-    *g_cwndStream->GetStream() << "time,cwnd_bytes" << std::endl;
+    g_cwndStream = ascii.CreateFileStream(cwndPath);
+    *g_cwndStream->GetStream() << "time,cwnd\n";
+    Config::ConnectWithoutContext("/NodeList/0/$ns3::TcpL4Protocol/SocketList/0/CongestionWindow", MakeBoundCallback(&CwndTracer, g_cwndStream));
 
-    Config::ConnectWithoutContext(
-        "/NodeList/0/$ns3::TcpL4Protocol/SocketList/0/CongestionWindow",
-        MakeBoundCallback(&CwndTracer, g_cwndStream));
-
+    //FlowMonitor
     FlowMonitorHelper flowmon;
     Ptr<FlowMonitor> monitor = flowmon.InstallAll();
 
-    fastLink.EnablePcapAll("tcp-left");
-    bottleneckLink.EnablePcapAll("tcp-bottleneck");
-    fastLink.EnablePcapAll("tcp-right");
-
-    Simulator::Stop(Seconds(20.0));
+    Simulator::Stop(Seconds(duration));
     Simulator::Run();
 
-    monitor->CheckForLostPackets();
+    //save FlowMonitor XML
+    std::string xmlPath = outputDir + "/" + label + "-flowmon.xml";
+    monitor->SerializeToXmlFile(xmlPath, true, true);
 
-    Ptr<Ipv4FlowClassifier> classifier =
-        DynamicCast<Ipv4FlowClassifier>(flowmon.GetClassifier());
+    //save results CSV
+    monitor->CheckForLostPackets();
+    Ptr<Ipv4FlowClassifier> classifier = DynamicCast<Ipv4FlowClassifier>(flowmon.GetClassifier());
     std::map<FlowId, FlowMonitor::FlowStats> stats = monitor->GetFlowStats();
 
-    std::ofstream out(resultsFile.c_str());
+    std::string csvPath = outputDir + "/" + label + "-results.csv";
+    std::ofstream out(csvPath.c_str());
     out << "flowId,src,dst,txPackets,rxPackets,lostPackets,throughputMbps,meanDelayMs\n";
 
-    for (std::map<FlowId, FlowMonitor::FlowStats>::const_iterator i = stats.begin();
-         i != stats.end(); ++i)
+    for (auto &i : stats)
     {
-        Ipv4FlowClassifier::FiveTuple t = classifier->FindFlow(i->first);
-
-        double duration =
-            i->second.timeLastRxPacket.GetSeconds() - i->second.timeFirstTxPacket.GetSeconds();
-
-        double throughputMbps = 0.0;
-        if (duration > 0)
-        {
-            throughputMbps = i->second.rxBytes * 8.0 / duration / 1000000.0;
-        }
-
-        double meanDelayMs = 0.0;
-        if (i->second.rxPackets > 0)
-        {
-            meanDelayMs = i->second.delaySum.GetSeconds() * 1000.0 / i->second.rxPackets;
-        }
-
-        out << i->first << ","
+        Ipv4FlowClassifier::FiveTuple t = classifier->FindFlow(i.first);
+        double dur = i.second.timeLastRxPacket.GetSeconds() - i.second.timeFirstTxPacket.GetSeconds();
+        double tput = (dur > 0) ? i.second.rxBytes * 8.0 / dur / 1e6 : 0;
+        double delay_ms = (i.second.rxPackets > 0)
+                        ? i.second.delaySum.GetSeconds() * 1000.0 / i.second.rxPackets
+                        : 0;
+        out << i.first << ","
             << t.sourceAddress << ","
             << t.destinationAddress << ","
-            << i->second.txPackets << ","
-            << i->second.rxPackets << ","
-            << i->second.lostPackets << ","
-            << throughputMbps << ","
-            << meanDelayMs << "\n";
+            << i.second.txPackets << ","
+            << i.second.rxPackets << ","
+            << i.second.lostPackets << ","
+            << tput << ","
+            << delay_ms << "\n";
     }
-
-    Ptr<PacketSink> sink = DynamicCast<PacketSink>(sinkApps.Get(0));
-    std::cout << tcpVariant << " total bytes received: " << sink->GetTotalRx() << std::endl;
-    std::cout << "Saved flow metrics to " << resultsFile << std::endl;
-    std::cout << "Saved cwnd trace to " << cwndFile << std::endl;
-
     out.close();
+
+    std::cout << "[DONE] " << tcpVariant
+              << " | cwnd: " << cwndPath
+              << " | results: " << csvPath << std::endl;
+
     Simulator::Destroy();
     return 0;
 }
