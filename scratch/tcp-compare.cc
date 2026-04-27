@@ -14,9 +14,21 @@ using namespace ns3;
 
 static Ptr<OutputStreamWrapper> g_cwndStream;
 
+static ApplicationContainer g_sourceApp;
+
 static void CwndTracer(Ptr<OutputStreamWrapper> stream, uint32_t oldCwnd, uint32_t newCwnd)
 {
     *stream->GetStream() << Simulator::Now().GetSeconds() << "," << newCwnd << "\n";
+}
+
+static void ConnectCwndTrace()
+{
+    Ptr<BulkSendApplication> bulk = DynamicCast<BulkSendApplication>(g_sourceApp.Get(0));
+    Ptr<Socket> sock = bulk->GetSocket();
+    if (sock)
+    {
+        sock->TraceConnectWithoutContext("CongestionWindow", MakeBoundCallback(&CwndTracer, g_cwndStream));
+    }
 }
 
 int main(int argc, char *argv[])
@@ -89,16 +101,17 @@ int main(int argc, char *argv[])
     BulkSendHelper sourceHelper("ns3::TcpSocketFactory", InetSocketAddress(if23.GetAddress(1), port));
     sourceHelper.SetAttribute("MaxBytes", UintegerValue(0));
     sourceHelper.SetAttribute("SendSize", UintegerValue(1024));
-    ApplicationContainer sourceApp = sourceHelper.Install(nodes.Get(0));
-    sourceApp.Start(Seconds(1.0));
-    sourceApp.Stop(Seconds(duration - 1.0));
+    // ApplicationContainer sourceApp = sourceHelper.Install(nodes.Get(0));
+    g_sourceApp = sourceHelper.Install(nodes.Get(0));    
+    g_sourceApp.Start(Seconds(1.0));
+    g_sourceApp.Stop(Seconds(duration - 1.0));
 
     //cwnd trace
     std::string cwndPath = outputDir + "/" + label + "-cwnd.csv";
     AsciiTraceHelper ascii;
     g_cwndStream = ascii.CreateFileStream(cwndPath);
     *g_cwndStream->GetStream() << "time,cwnd\n";
-    Config::ConnectWithoutContext("/NodeList/0/$ns3::TcpL4Protocol/SocketList/0/CongestionWindow", MakeBoundCallback(&CwndTracer, g_cwndStream));
+    Simulator::Schedule(Seconds(1.1), &ConnectCwndTrace);
 
     //FlowMonitor
     FlowMonitorHelper flowmon;
