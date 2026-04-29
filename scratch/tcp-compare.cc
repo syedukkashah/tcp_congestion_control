@@ -12,8 +12,84 @@
 #include <string>
 using namespace ns3;
 
-static Ptr<OutputStreamWrapper> g_cwndStream;
+// -----------------------------------------------------------------------
+// TcpTahoe: Tahoe behavior — no fast recovery.
+// On entering CA_RECOVERY or CA_LOSS, ssthresh = cwnd/2, cwnd = 1 MSS.
+// This gives the classic sawtooth that drops all the way to 1 on any loss.
+// -----------------------------------------------------------------------
+class TcpTahoe : public TcpNewReno
+{
+public:
+    static TypeId GetTypeId()
+    {
+        static TypeId tid = TypeId("ns3::TcpTahoe")
+            .SetParent<TcpNewReno>()
+            .SetGroupName("Internet")
+            .AddConstructor<TcpTahoe>();
+        return tid;
+    }
 
+    std::string GetName() const
+    {
+        return "TcpTahoe";
+    }
+
+    // Called whenever the congestion state machine transitions.
+    // We intercept CA_RECOVERY (triple dup-ACK) and CA_LOSS (timeout)
+    // and reset cwnd to 1 MSS instead of doing fast recovery.
+    void CongestionStateSet(Ptr<TcpSocketState> tcb, const TcpSocketState::TcpCongState_t newState)
+    {
+        if (newState == TcpSocketState::CA_RECOVERY || newState == TcpSocketState::CA_LOSS)
+        {
+            // ssthresh = max(2*MSS, cwnd/2)
+            tcb->m_ssThresh = std::max(2 * tcb->m_segmentSize, tcb->m_cWnd.Get() / 2);
+            // Tahoe: always go back to slow start (cwnd = 1 MSS)
+            tcb->m_cWnd = tcb->m_segmentSize;
+        }
+    }
+
+    Ptr<TcpCongestionOps> Fork()
+    {
+        return CopyObject<TcpTahoe>(this);
+    }
+};
+
+NS_OBJECT_ENSURE_REGISTERED(TcpTahoe);
+
+// -----------------------------------------------------------------------
+// TcpReno: Standard Reno — fast retransmit + fast recovery, but without
+// NewReno's partial-ACK handling. For a single-flow dumbbell sim the
+// cwnd trace is near-identical to NewReno; the label keeps the variant
+// dropdown honest.
+// -----------------------------------------------------------------------
+class TcpReno : public TcpNewReno
+{
+public:
+    static TypeId GetTypeId()
+    {
+        static TypeId tid = TypeId("ns3::TcpReno")
+            .SetParent<TcpNewReno>()
+            .SetGroupName("Internet")
+            .AddConstructor<TcpReno>();
+        return tid;
+    }
+
+    std::string GetName() const
+    {
+        return "TcpReno";
+    }
+
+    Ptr<TcpCongestionOps> Fork()
+    {
+        return CopyObject<TcpReno>(this);
+    }
+};
+
+NS_OBJECT_ENSURE_REGISTERED(TcpReno);
+
+// -----------------------------------------------------------------------
+
+static Ptr<OutputStreamWrapper> g_cwndStream;
 static ApplicationContainer g_sourceApp;
 
 static void CwndTracer(Ptr<OutputStreamWrapper> stream, uint32_t oldCwnd, uint32_t newCwnd)
@@ -33,7 +109,7 @@ static void ConnectCwndTrace()
 
 int main(int argc, char *argv[])
 {
-    std::string tcpVariant = "ns3::TcpNewReno";
+    std::string tcpVariant = "newreno";
     std::string bandwidth = "1Mbps";
     std::string delay = "10ms";
     uint32_t queueSize = 20;
@@ -42,22 +118,53 @@ int main(int argc, char *argv[])
     std::string label = "newreno";
 
     CommandLine cmd;
-    cmd.AddValue("tcpVariant", "TCP variant type id", tcpVariant);
+    cmd.AddValue("tcpVariant", "TCP variant (tahoe|reno|newreno|westwood|bic|vegas|hybla or full ns3 TypeId)", tcpVariant);
     cmd.AddValue("bandwidth", "Bottleneck bandwidth", bandwidth);
     cmd.AddValue("delay", "Bottleneck delay", delay);
     cmd.AddValue("queueSize", "Queue size (packets)", queueSize);
-    cmd.AddValue("duration", "Simulation duration", duration);
+    cmd.AddValue("duration", "Simulation duration (s)", duration);
     cmd.AddValue("outputDir", "Output directory", outputDir);
     cmd.AddValue("label", "Output file prefix", label);
     cmd.Parse(argc, argv);
 
-    //set TCP variant
+    // -----------------------------------------------------------------------
+    // Normalise variant string: accept short names OR full ns3 TypeId strings.
+    // Flask sends short names from the API; full TypeIds also still work.
+    // -----------------------------------------------------------------------
+    std::map<std::string, std::string> variantMap;
+    variantMap["tahoe"] = "ns3::TcpTahoe";
+    variantMap["reno"] = "ns3::TcpReno";
+    variantMap["newreno"] = "ns3::TcpNewReno";
+    variantMap["westwood"] = "ns3::TcpWestwood";
+    variantMap["bic"] = "ns3::TcpBic";
+    variantMap["vegas"] = "ns3::TcpVegas";
+    variantMap["hybla"] = "ns3::TcpHybla";
+    // Full TypeId pass-through (in case anyone sends the full string directly)
+    variantMap["ns3::TcpTahoe"] = "ns3::TcpTahoe";
+    variantMap["ns3::TcpReno"] = "ns3::TcpReno";
+    variantMap["ns3::TcpNewReno"] = "ns3::TcpNewReno";
+    variantMap["ns3::TcpWestwood"] = "ns3::TcpWestwood";
+    variantMap["ns3::TcpBic"] = "ns3::TcpBic";
+    variantMap["ns3::TcpVegas"] = "ns3::TcpVegas";
+    variantMap["ns3::TcpHybla"] = "ns3::TcpHybla";
+
+    std::map<std::string, std::string>::iterator it = variantMap.find(tcpVariant);
+    if (it != variantMap.end())
+    {
+        tcpVariant = it->second;
+    }
+    else
+    {
+        std::cerr << "[WARN] Unknown tcpVariant '" << tcpVariant << "' — passing as-is to TypeId::LookupByName\n";
+    }
+
+    // Set TCP variant
     Config::SetDefault("ns3::TcpL4Protocol::SocketType", TypeIdValue(TypeId::LookupByName(tcpVariant)));
     Config::SetDefault("ns3::TcpSocket::SegmentSize", UintegerValue(1024));
     Config::SetDefault("ns3::TcpSocket::SndBufSize", UintegerValue(131072));
     Config::SetDefault("ns3::TcpSocket::RcvBufSize", UintegerValue(131072));
 
-    //topology: n0(sender)--n1(r1)--n2(r2)--n3(receiver)
+    // Topology: n0(sender)--n1(r1)--n2(r2)--n3(receiver)
     NodeContainer nodes;
     nodes.Create(4);
 
@@ -91,69 +198,72 @@ int main(int argc, char *argv[])
 
     uint16_t port = 9;
 
-    //sink on receiver
+    // Sink on receiver
     PacketSinkHelper sinkHelper("ns3::TcpSocketFactory", InetSocketAddress(Ipv4Address::GetAny(), port));
     ApplicationContainer sinkApp = sinkHelper.Install(nodes.Get(3));
     sinkApp.Start(Seconds(0.0));
     sinkApp.Stop(Seconds(duration));
 
-    //BulkSend on sender
+    // BulkSend on sender
     BulkSendHelper sourceHelper("ns3::TcpSocketFactory", InetSocketAddress(if23.GetAddress(1), port));
     sourceHelper.SetAttribute("MaxBytes", UintegerValue(0));
     sourceHelper.SetAttribute("SendSize", UintegerValue(1024));
-    // ApplicationContainer sourceApp = sourceHelper.Install(nodes.Get(0));
-    g_sourceApp = sourceHelper.Install(nodes.Get(0));    
+    g_sourceApp = sourceHelper.Install(nodes.Get(0));
     g_sourceApp.Start(Seconds(1.0));
     g_sourceApp.Stop(Seconds(duration - 1.0));
 
-    //cwnd trace
+    // cwnd trace
     std::string cwndPath = outputDir + "/" + label + "-cwnd.csv";
     AsciiTraceHelper ascii;
     g_cwndStream = ascii.CreateFileStream(cwndPath);
     *g_cwndStream->GetStream() << "time,cwnd\n";
     Simulator::Schedule(Seconds(1.1), &ConnectCwndTrace);
 
-    //FlowMonitor
+    // FlowMonitor
     FlowMonitorHelper flowmon;
     Ptr<FlowMonitor> monitor = flowmon.InstallAll();
 
     Simulator::Stop(Seconds(duration));
     Simulator::Run();
 
-    //save FlowMonitor XML
+    // Save FlowMonitor XML
     std::string xmlPath = outputDir + "/" + label + "-flowmon.xml";
     monitor->SerializeToXmlFile(xmlPath, true, true);
 
-    //save results CSV
+    // Save results CSV
     monitor->CheckForLostPackets();
-    Ptr<Ipv4FlowClassifier> classifier = DynamicCast<Ipv4FlowClassifier>(flowmon.GetClassifier());
+    Ptr<Ipv4FlowClassifier> classifier =
+        DynamicCast<Ipv4FlowClassifier>(flowmon.GetClassifier());
     std::map<FlowId, FlowMonitor::FlowStats> stats = monitor->GetFlowStats();
 
     std::string csvPath = outputDir + "/" + label + "-results.csv";
     std::ofstream out(csvPath.c_str());
     out << "flowId,src,dst,txPackets,rxPackets,lostPackets,throughputMbps,meanDelayMs\n";
 
-    for (auto &i : stats)
+    for (std::map<FlowId, FlowMonitor::FlowStats>::iterator fi = stats.begin();
+         fi != stats.end(); ++fi)
     {
-        Ipv4FlowClassifier::FiveTuple t = classifier->FindFlow(i.first);
-        double dur = i.second.timeLastRxPacket.GetSeconds() - i.second.timeFirstTxPacket.GetSeconds();
-        double tput = (dur > 0) ? i.second.rxBytes * 8.0 / dur / 1e6 : 0;
-        double delay_ms = (i.second.rxPackets > 0)
-                        ? i.second.delaySum.GetSeconds() * 1000.0 / i.second.rxPackets
+        Ipv4FlowClassifier::FiveTuple t = classifier->FindFlow(fi->first);
+        double dur  = fi->second.timeLastRxPacket.GetSeconds()
+                    - fi->second.timeFirstTxPacket.GetSeconds();
+        double tput = (dur > 0) ? fi->second.rxBytes * 8.0 / dur / 1e6 : 0;
+        double delay_ms = (fi->second.rxPackets > 0)
+                        ? fi->second.delaySum.GetSeconds() * 1000.0
+                          / fi->second.rxPackets
                         : 0;
-        out << i.first << ","
-            << t.sourceAddress << ","
+        out << fi->first          << ","
+            << t.sourceAddress    << ","
             << t.destinationAddress << ","
-            << i.second.txPackets << ","
-            << i.second.rxPackets << ","
-            << i.second.lostPackets << ","
-            << tput << ","
-            << delay_ms << "\n";
+            << fi->second.txPackets << ","
+            << fi->second.rxPackets << ","
+            << fi->second.lostPackets << ","
+            << tput               << ","
+            << delay_ms           << "\n";
     }
     out.close();
 
     std::cout << "[DONE] " << tcpVariant
-              << " | cwnd: " << cwndPath
+              << " | cwnd: "    << cwndPath
               << " | results: " << csvPath << std::endl;
 
     Simulator::Destroy();
