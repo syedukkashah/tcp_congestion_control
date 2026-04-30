@@ -1,111 +1,127 @@
-:root {
-  --text: #6b6375;
-  --text-h: #08060d;
-  --bg: #fff;
-  --border: #e5e4e7;
-  --code-bg: #f4f3ec;
-  --accent: #aa3bff;
-  --accent-bg: rgba(170, 59, 255, 0.1);
-  --accent-border: rgba(170, 59, 255, 0.5);
-  --social-bg: rgba(244, 243, 236, 0.5);
-  --shadow:
-    rgba(0, 0, 0, 0.1) 0 10px 15px -3px, rgba(0, 0, 0, 0.05) 0 4px 6px -2px;
+@import url('https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=JetBrains+Mono:ital,wght@0,300;0,400;0,500;0,600;0,700;1,400&display=swap');
 
-  --sans: system-ui, 'Segoe UI', Roboto, sans-serif;
-  --heading: system-ui, 'Segoe UI', Roboto, sans-serif;
-  --mono: ui-monospace, Consolas, monospace;
+@import url('https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=JetBrains+Mono:ital,wght@0,300;0,400;0,500;0,600;0,700;1,400&display=swap');
 
-  font: 18px/145% var(--sans);
-  letter-spacing: 0.18px;
-  color-scheme: light dark;
-  color: var(--text);
-  background: var(--bg);
-  font-synthesis: none;
-  text-rendering: optimizeLegibility;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
+@import "tailwindcss";
 
-  @media (max-width: 1024px) {
-    font-size: 16px;
+@theme {
+  --color-surface:        #0a0d12;
+  --color-surface-1:      #11151c;
+  --color-surface-2:      #161b24;
+  --color-surface-3:      #1c2230;
+  --color-edge:           #1e242e;
+  --color-edge-bright:    #2a3240;
+  --color-fg:             #e8e3d8;
+  --color-fg-dim:         #9ca3af;
+  --color-fg-muted:       #6b7280;
+  --color-accent:         #f97316;
+  --color-accent-bright:  #fb923c;
+  --color-accent-dim:     #9a4a1f;
+  --color-data:           #38bdf8;
+  --color-data-bright:    #7dd3fc;
+  --color-ok:             #4ade80;
+  --color-warn:           #fbbf24;
+  --color-err:            #ef4444;
+
+  --font-display: "Instrument Serif", ui-serif, serif;
+  --font-mono:    "JetBrains Mono", ui-monospace, monospace;
+
+  --tracking-widest2: 0.18em;
+
+  --animate-ticker:    ticker 60s linear infinite;
+  --animate-pulse-dot: pulse-dot 1.6s ease-in-out infinite;
+  --animate-fade-in:   fade-in 0.5s ease-out both;
+
+  @keyframes ticker {
+    0%   { transform: translateX(0); }
+    100% { transform: translateX(-50%); }
+  }
+  @keyframes pulse-dot {
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50%      { opacity: 0.4; transform: scale(0.85); }
+  }
+  @keyframes fade-in {
+    0%   { opacity: 0; transform: translateY(4px); }
+    100% { opacity: 1; transform: translateY(0); }
   }
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --text: #9ca3af;
-    --text-h: #f3f4f6;
-    --bg: #16171d;
-    --border: #2e303a;
-    --code-bg: #1f2028;
-    --accent: #c084fc;
-    --accent-bg: rgba(192, 132, 252, 0.15);
-    --accent-border: rgba(192, 132, 252, 0.5);
-    --social-bg: rgba(47, 48, 58, 0.5);
-    --shadow:
-      rgba(0, 0, 0, 0.4) 0 10px 15px -3px, rgba(0, 0, 0, 0.25) 0 4px 6px -2px;
+@layer base {
+  html, body, #root {
+    height: 100%;
+    background: #0a0d12;
+    color: #e8e3d8;
   }
+  body {
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-feature-settings: 'ss01', 'ss02', 'cv11';
+    background-image:
+      radial-gradient(ellipse 80% 50% at 50% -10%, rgba(249, 115, 22, 0.05), transparent),
+      linear-gradient(rgba(255,255,255,0.015) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(255,255,255,0.015) 1px, transparent 1px);
+    background-size: auto, 32px 32px, 32px 32px;
+  }
+  ::selection {
+    background: rgba(249, 115, 22, 0.35);
+    color: #fff;
+  }
+  /* scrollbar */
+  ::-webkit-scrollbar { width: 10px; height: 10px; }
+  ::-webkit-scrollbar-track { background: #0a0d12; }
+  ::-webkit-scrollbar-thumb { background: #1e242e; border: 2px solid #0a0d12; }
+  ::-webkit-scrollbar-thumb:hover { background: #2a3240; }
+}
 
-  #social .button-icon {
-    filter: invert(1) brightness(2);
+@layer components {
+  .panel {
+    @apply bg-surface-1 border border-edge rounded-sm;
+  }
+  .panel-raised {
+    @apply bg-surface-2 border border-edge-bright rounded-sm;
+  }
+  .label-mono {
+    @apply font-mono text-[10px] uppercase tracking-widest2 text-fg-muted;
+  }
+  .label-mono-bright {
+    @apply font-mono text-[10px] uppercase tracking-widest2 text-fg-dim;
+  }
+  .data-mono {
+    @apply font-mono tabular-nums;
+  }
+  .index-marker {
+    @apply font-mono text-[11px] text-fg-muted;
+  }
+  .hairline-x {
+    @apply h-px bg-edge w-full;
+  }
+  .btn-primary {
+    @apply font-mono text-[11px] uppercase tracking-widest2 px-5 py-3
+           bg-accent text-surface border border-accent
+           hover:bg-accent-bright hover:border-accent-bright
+           disabled:bg-accent-dim disabled:border-accent-dim disabled:cursor-not-allowed
+           transition-colors;
+  }
+  .btn-ghost {
+    @apply font-mono text-[11px] uppercase tracking-widest2 px-4 py-2
+           bg-transparent text-fg-dim border border-edge
+           hover:text-fg hover:border-edge-bright
+           transition-colors;
+  }
+  .input-field {
+    @apply font-mono text-[12px] bg-surface border border-edge px-3 py-2
+           text-fg placeholder:text-fg-muted
+           focus:outline-none focus:border-accent
+           transition-colors w-full;
   }
 }
 
-#root {
-  width: 1126px;
-  max-width: 100%;
-  margin: 0 auto;
-  text-align: center;
-  border-inline: 1px solid var(--border);
-  min-height: 100svh;
-  display: flex;
-  flex-direction: column;
-  box-sizing: border-box;
+/* recharts overrides */
+.recharts-cartesian-axis-tick text {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  fill: #6b7280;
 }
-
-body {
-  margin: 0;
+.recharts-cartesian-grid line {
+  stroke: #1e242e;
 }
-
-h1,
-h2 {
-  font-family: var(--heading);
-  font-weight: 500;
-  color: var(--text-h);
-}
-
-h1 {
-  font-size: 56px;
-  letter-spacing: -1.68px;
-  margin: 32px 0;
-  @media (max-width: 1024px) {
-    font-size: 36px;
-    margin: 20px 0;
-  }
-}
-h2 {
-  font-size: 24px;
-  line-height: 118%;
-  letter-spacing: -0.24px;
-  margin: 0 0 8px;
-  @media (max-width: 1024px) {
-    font-size: 20px;
-  }
-}
-p {
-  margin: 0;
-}
-
-code,
-.counter {
-  font-family: var(--mono);
-  display: inline-flex;
-  border-radius: 4px;
-  color: var(--text-h);
-}
-
-code {
-  font-size: 15px;
-  line-height: 135%;
-  padding: 4px 8px;
-  background: var(--code-bg);
-}
+.recharts-tooltip-wrapper { outline: none !important; }

@@ -1,176 +1,140 @@
-import { useState } from 'react'
-import {
-  LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
-  BarChart, Bar, ResponsiveContainer
-} from 'recharts'
+import { useEffect, useMemo, useState } from 'react';
+import { Ticker } from './components/ticker';
+import { Header } from './components/header';
+import { ScenarioPicker } from './components/scenariopicker';
+import { ConfigPanel } from './components/configpanel';
+import { Topology } from './components/topology';
+import { CwndChart } from './components/cwndchart';
+import { MetricsPanel } from './components/metricspanel';
+import { SCENARIOS, DEFAULT_SCENARIO_ID } from './lib/scenarios';
+import { simulate, checkHealth } from './lib/api';
+import type { Variant, CwndPoint, Metrics } from './lib/types';
 
-const API = 'http://192.168.100.165:5000'
-
-const VARIANTS = ['newreno', 'westwood', 'bic', 'vegas', 'hybla']
-
-interface SimConfig {
-  tcpVariant: string
-  bandwidth: string
-  delay: string
-  queueSize: number
-  duration: number
-}
-
-interface CwndRow { time: number; cwnd: number }
-interface Metrics {
-  throughputMbps: number
-  avgDelayMs: number
-  lossRate: number
-  txPackets: number
-  rxPackets: number
-}
+type SimState = 'idle' | 'running' | 'done' | 'error';
 
 export default function App() {
-  const [config, setConfig] = useState<SimConfig>({
-    tcpVariant: 'newreno',
-    bandwidth: '1Mbps',
-    delay: '10ms',
-    queueSize: 20,
-    duration: 20,
-  })
-  const [status, setStatus] = useState<string>('')
-  const [cwndData, setCwndData] = useState<CwndRow[]>([])
-  const [metrics, setMetrics] = useState<Metrics | null>(null)
-  const [loading, setLoading] = useState(false)
+  const [scenarioId, setScenarioId] = useState<string>(DEFAULT_SCENARIO_ID);
+  const scenario = useMemo(
+    () => SCENARIOS.find(s => s.id === scenarioId) ?? SCENARIOS[0],
+    [scenarioId]
+  );
 
-  const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
-    const { name, value } = e.target
-    setConfig(prev => ({ ...prev, [name]: name === 'queueSize' || name === 'duration' ? Number(value) : value }))
-  }
+  // working config — when scenario is locked, mirrors scenario; when custom, user-editable
+  const [variant,   setVariant]   = useState<Variant>(scenario.variant ?? 'newreno');
+  const [bandwidth, setBandwidth] = useState<string>(scenario.bandwidth);
+  const [delay,     setDelay]     = useState<string>(scenario.delay);
+  const [queueSize, setQueueSize] = useState<number>(scenario.queueSize);
+  const [duration,  setDuration]  = useState<number>(scenario.duration);
 
-  const runSimulation = async () => {
-    setLoading(true)
-    setStatus('Running simulation...')
-    setCwndData([])
-    try {
-      const res = await fetch(`${API}/api/simulate`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          tcpVariant: `ns3::Tcp${config.tcpVariant.charAt(0).toUpperCase() + config.tcpVariant.slice(1)}`,
-          bandwidth: config.bandwidth,
-          delay: config.delay,
-          queueSize: config.queueSize,
-          duration: config.duration,
-          label: config.tcpVariant,
-        }),
-      })
-      const data = await res.json()
-      if (!res.ok) throw new Error(data.error || 'Simulation failed')
-      setCwndData(data.cwnd)
-      setMetrics(data.metrics)
-      setStatus('Done.')
-    } catch (err: unknown) {
-      setStatus(`Error: ${err instanceof Error ? err.message : String(err)}`)
+  // sync working config when a non-custom scenario is picked
+  // (state-during-render pattern — avoids the useEffect cascade)
+  const [syncedScenarioId, setSyncedScenarioId] = useState<string | null>(null);
+  if (scenario.id !== syncedScenarioId) {
+    setSyncedScenarioId(scenario.id);
+    if (!scenario.isCustom) {
+      if (scenario.variant !== null) setVariant(scenario.variant);
+      setBandwidth(scenario.bandwidth);
+      setDelay(scenario.delay);
+      setQueueSize(scenario.queueSize);
+      setDuration(scenario.duration);
     }
-    setLoading(false)
   }
+
+  // results
+  const [cwndData, setCwndData] = useState<CwndPoint[]>([]);
+  const [metrics, setMetrics]   = useState<Metrics | null>(null);
+  const [simState, setSimState] = useState<SimState>('idle');
+  const [statusMsg, setStatusMsg] = useState<string>('Ready.');
+
+  // api health
+  const [apiOnline, setApiOnline] = useState<boolean | null>(null);
+  useEffect(() => {
+    let alive = true;
+    const ping = () =>
+      checkHealth()
+        .then(() => alive && setApiOnline(true))
+        .catch(() => alive && setApiOnline(false));
+    ping();
+    const t = setInterval(ping, 15000);
+    return () => { alive = false; clearInterval(t); };
+  }, []);
+
+  const handleFieldChange = (field: 'bandwidth' | 'delay' | 'queueSize' | 'duration', value: string | number) => {
+    if (field === 'bandwidth') setBandwidth(value as string);
+    if (field === 'delay')     setDelay(value as string);
+    if (field === 'queueSize') setQueueSize(value as number);
+    if (field === 'duration')  setDuration(value as number);
+  };
+
+  const runSim = async () => {
+    setSimState('running');
+    setStatusMsg(`Running ${variant} for ${duration}s …`);
+    setCwndData([]);
+    setMetrics(null);
+    try {
+      const res = await simulate({
+        variant, bandwidth, delay, queueSize, duration,
+        label: variant,
+      });
+      setCwndData(res.cwnd ?? []);
+      setMetrics(res.metrics ?? null);
+      setSimState('done');
+      setStatusMsg(`Done · ${res.cwnd?.length ?? 0} cwnd samples · throughput ${res.metrics?.throughputMbps?.toFixed?.(3) ?? '–'} Mbps`);
+    } catch (err) {
+      setSimState('error');
+      setStatusMsg(`Error: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  };
 
   return (
-    <div style={{ fontFamily: 'monospace', padding: '24px', maxWidth: '1100px', margin: '0 auto' }}>
-      <h1 style={{ marginBottom: '8px' }}>TCP Congestion Control Simulator</h1>
-      <p style={{ color: '#888', marginBottom: '24px' }}>ns-3.30 · 4-node dumbbell · DropTail</p>
+    <div className="min-h-full">
+      <Ticker
+        apiOnline={apiOnline}
+        variant={variant}
+        scenario={scenario.title}
+        simState={simState}
+      />
+      <Header />
 
-      {/* Config Panel */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: '12px', marginBottom: '20px' }}>
-        <div>
-          <label>Variant</label><br />
-          <select name="tcpVariant" value={config.tcpVariant} onChange={handleChange}
-            style={{ width: '100%', padding: '6px' }}>
-            {VARIANTS.map(v => <option key={v} value={v}>{v}</option>)}
-          </select>
-        </div>
-        <div>
-          <label>Bandwidth</label><br />
-          <input name="bandwidth" value={config.bandwidth} onChange={handleChange}
-            style={{ width: '100%', padding: '6px' }} />
-        </div>
-        <div>
-          <label>Delay</label><br />
-          <input name="delay" value={config.delay} onChange={handleChange}
-            style={{ width: '100%', padding: '6px' }} />
-        </div>
-        <div>
-          <label>Queue Size</label><br />
-          <input name="queueSize" type="number" value={config.queueSize} onChange={handleChange}
-            style={{ width: '100%', padding: '6px' }} />
-        </div>
-        <div>
-          <label>Duration (s)</label><br />
-          <input name="duration" type="number" value={config.duration} onChange={handleChange}
-            style={{ width: '100%', padding: '6px' }} />
-        </div>
-      </div>
+      <ScenarioPicker
+        selectedId={scenarioId}
+        onSelect={setScenarioId}
+        disabled={simState === 'running'}
+      />
 
-      <button onClick={runSimulation} disabled={loading}
-        style={{ padding: '10px 28px', fontSize: '14px', cursor: loading ? 'not-allowed' : 'pointer', marginBottom: '12px' }}>
-        {loading ? 'Simulating...' : 'Run Simulation'}
-      </button>
-      {status && <p style={{ color: status.startsWith('Error') ? 'red' : 'green' }}>{status}</p>}
+      <main className="max-w-[1400px] mx-auto px-6 py-8 space-y-10">
+        <ConfigPanel
+          scenario={scenario}
+          variant={variant}
+          bandwidth={bandwidth}
+          delay={delay}
+          queueSize={queueSize}
+          duration={duration}
+          onVariantChange={setVariant}
+          onFieldChange={handleFieldChange}
+          onRun={runSim}
+          loading={simState === 'running'}
+          status={{ kind: simState, message: statusMsg }}
+        />
 
-      {/* Topology SVG */}
-      <div style={{ margin: '24px 0' }}>
-        <h2>Topology</h2>
-        <svg width="600" height="100" style={{ background: '#f9f9f9', borderRadius: '8px' }}>
-          {/* Nodes */}
-          {[['n0', 60], ['r1', 200], ['r2', 380], ['n3', 520]].map(([label, x]) => (
-            <g key={label}>
-              <circle cx={Number(x)} cy={50} r={20} fill="#4a90d9" />
-              <text x={Number(x)} y={55} textAnchor="middle" fill="white" fontSize={12}>{label}</text>
-            </g>
-          ))}
-          {/* Links */}
-          <line x1={80} y1={50} x2={180} y2={50} stroke="#333" strokeWidth={2} />
-          <line x1={220} y1={50} x2={360} y2={50} stroke="#e55" strokeWidth={3} />
-          <line x1={400} y1={50} x2={500} y2={50} stroke="#333" strokeWidth={2} />
-          {/* Labels */}
-          <text x={130} y={40} textAnchor="middle" fontSize={10} fill="#555">10Mbps/2ms</text>
-          <text x={290} y={40} textAnchor="middle" fontSize={10} fill="#e55">{config.bandwidth}/{config.delay} ⬅ bottleneck</text>
-          <text x={450} y={40} textAnchor="middle" fontSize={10} fill="#555">10Mbps/2ms</text>
-        </svg>
-      </div>
+        <Topology
+          bandwidth={bandwidth}
+          delay={delay}
+          queueSize={queueSize}
+        />
 
-      {/* cwnd Chart */}
-      {cwndData.length > 0 && (
-        <div style={{ marginBottom: '32px' }}>
-          <h2>Congestion Window (cwnd)</h2>
-          <ResponsiveContainer width="100%" height={300}>
-            <LineChart data={cwndData}>
-              <CartesianGrid strokeDasharray="3 3" />
-              <XAxis dataKey="time" label={{ value: 'Time (s)', position: 'insideBottom', offset: -4 }} />
-              <YAxis label={{ value: 'cwnd (bytes)', angle: -90, position: 'insideLeft' }} />
-              <Tooltip />
-              <Legend />
-              <Line type="monotone" dataKey="cwnd" dot={false} stroke="#4a90d9" name={config.tcpVariant} />
-            </LineChart>
-          </ResponsiveContainer>
+        <CwndChart data={cwndData} variantLabel={variant} />
+
+        <MetricsPanel metrics={metrics} duration={duration} />
+      </main>
+
+      <footer className="border-t border-edge mt-8">
+        <div className="max-w-[1400px] mx-auto px-6 py-5 flex items-center justify-between font-mono text-[10px] tracking-widest2 text-fg-muted">
+          <span>FAST-NUCES · KARACHI · CC SIMULATOR</span>
+          <span>NS-3.30 · FLASK · REACT · TAILWIND · RECHARTS</span>
+          <span>BUILD dev/447980d</span>
         </div>
-      )}
-
-      {/* Results Chart */}
-      {metrics && (
-        <div style={{ marginBottom: '32px' }}>
-          <h2>Flow Metrics</h2>
-          <ResponsiveContainer width="100%" height={250}>
-            <BarChart data={[metrics]}>
-              <CartesianGrid strokeDasharray="3 3" />
-              <XAxis dataKey="label" />
-              <YAxis />
-              <Tooltip />
-              <Legend />
-              <Bar dataKey="throughputMbps" fill="#4a90d9" name="Throughput (Mbps)" />
-              <Bar dataKey="lossRate" fill="#e55" name="Loss Rate (%)" />
-              <Bar dataKey="avgDelayMs" fill="#f0a500" name="Avg Delay (ms)" />
-            </BarChart>
-          </ResponsiveContainer>
-          <p>TX: {metrics.txPackets} | RX: {metrics.rxPackets} | Loss: {metrics.lossRate}% | Delay: {metrics.avgDelayMs}ms | Throughput: {metrics.throughputMbps}Mbps</p>
-        </div>
-      )}
+      </footer>
     </div>
-  )
+  );
 }
