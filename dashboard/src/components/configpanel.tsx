@@ -13,11 +13,16 @@ interface ConfigPanelProps {
   onRun: () => void;
   loading: boolean;
   status: { kind: 'idle' | 'running' | 'done' | 'error'; message?: string };
+  compareMode: boolean;
+  variant2: Variant;
+  onCompareToggle: () => void;
+  onVariant2Change: (v: Variant) => void;
 }
 
 export function ConfigPanel({
   scenario, variant, bandwidth, delay, queueSize, duration,
   onVariantChange, onFieldChange, onRun, loading, status,
+  compareMode, variant2, onCompareToggle, onVariant2Change,
 }: ConfigPanelProps) {
   const locked = !scenario.isCustom;
 
@@ -35,7 +40,8 @@ export function ConfigPanel({
 
       <div className="panel p-5">
         <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
-          <Field label="Variant">
+          {/* Variant A (or sole variant) */}
+          <Field label={compareMode ? 'Variant A' : 'Variant'}>
             <select
               value={variant}
               onChange={e => onVariantChange(e.target.value as Variant)}
@@ -48,6 +54,22 @@ export function ConfigPanel({
             </select>
             <Hint>{VARIANTS.find(v => v.id === variant)?.note}</Hint>
           </Field>
+
+          {/* Variant B — only in compare mode */}
+          {compareMode && (
+            <Field label="Variant B">
+              <select
+                value={variant2}
+                onChange={e => onVariant2Change(e.target.value as Variant)}
+                className="input-field"
+              >
+                {VARIANTS.map(v => (
+                  <option key={v.id} value={v.id}>{v.label}</option>
+                ))}
+              </select>
+              <Hint>{VARIANTS.find(v => v.id === variant2)?.note}</Hint>
+            </Field>
+          )}
 
           <Field label="Bandwidth">
             <input
@@ -109,9 +131,24 @@ export function ConfigPanel({
               {status.message ?? 'Ready.'}
             </span>
           </div>
-          <button onClick={onRun} disabled={loading} className="btn-primary">
-            {loading ? '◌ simulating…' : '▶ run simulation'}
-          </button>
+
+          <div className="flex items-center gap-3">
+            {/* Compare toggle */}
+            <button
+              onClick={onCompareToggle}
+              disabled={loading}
+              className={`font-mono text-[10px] tracking-widest2 px-3 py-2 border transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${
+                compareMode
+                  ? 'border-accent text-accent bg-accent/10'
+                  : 'border-edge text-fg-muted hover:border-fg-dim hover:text-fg-dim'
+              }`}
+            >
+              ⇄ COMPARE
+            </button>
+            <button onClick={onRun} disabled={loading} className="btn-primary">
+              {loading ? '◌ simulating…' : compareMode ? '▶ run compare' : '▶ run simulation'}
+            </button>
+          </div>
         </div>
       </div>
     </section>
