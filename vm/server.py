@@ -12,7 +12,7 @@ import subprocess
 import tempfile
 import shutil
 import xml.etree.ElementTree as ET
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, Response
 from flask_cors import CORS
 
 app = Flask(__name__)
@@ -244,8 +244,6 @@ def compare():
             "duration":  duration,
         },
     })
-
-from flask import Response
  
 @app.route("/api/export-csv", methods=["GET"])
 def export_csv():
