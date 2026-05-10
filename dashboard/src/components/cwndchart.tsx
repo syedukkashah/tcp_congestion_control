@@ -4,7 +4,7 @@ import {
   ReferenceLine, Legend,
 } from 'recharts';
 import type { CwndPoint, CompareResultEntry } from '../lib/types';
-import { COMPARE_PALETTE } from '../lib/constants';
+import { COMPARE_PALETTE, API_BASE } from '../lib/constants';
 
 interface CwndChartProps {
   data: CwndPoint[];
@@ -17,7 +17,6 @@ export function CwndChart({ data, variantLabel, simState, compareData }: CwndCha
   const isCompare = compareData && compareData.length > 0;
   const hasData = isCompare ? compareData[0].cwnd.length > 0 : data.length > 0;
 
-  // Progressive playback state (Layer 3)
   const [displayCount, setDisplayCount] = useState(0);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const prevStateRef = useRef<string>('idle');
@@ -27,16 +26,12 @@ export function CwndChart({ data, variantLabel, simState, compareData }: CwndCha
       const total = isCompare ? (compareData[0]?.cwnd.length ?? 0) : data.length;
       if (total === 0) return;
       setDisplayCount(0);
-      // Reveal all points over ~2.5 seconds
       const stepSize = Math.max(1, Math.ceil(total / 75));
       const intervalMs = Math.max(16, Math.floor(2500 / (total / stepSize)));
       intervalRef.current = setInterval(() => {
         setDisplayCount(n => {
           const next = n + stepSize;
-          if (next >= total) {
-            clearInterval(intervalRef.current!);
-            return total;
-          }
+          if (next >= total) { clearInterval(intervalRef.current!); return total; }
           return next;
         });
       }, intervalMs);
@@ -49,7 +44,6 @@ export function CwndChart({ data, variantLabel, simState, compareData }: CwndCha
     return () => { if (intervalRef.current) clearInterval(intervalRef.current); };
   }, [simState]);
 
-  // Sliced data for progressive reveal
   const slicedSingle = data.slice(0, displayCount || data.length);
   const maxCwnd = hasData
     ? isCompare
@@ -63,11 +57,13 @@ export function CwndChart({ data, variantLabel, simState, compareData }: CwndCha
     : 0;
   const totalSamples = isCompare ? (compareData![0]?.cwnd.length ?? 0) : data.length;
 
-  // For compare mode, merge cwnd arrays onto a common time axis
   const mergedCompareData = isCompare ? buildMergedData(compareData!) : null;
   const slicedCompare = mergedCompareData
     ? mergedCompareData.slice(0, displayCount || mergedCompareData.length)
     : null;
+
+  const singleCsvUrl  = `${API_BASE}/api/export-csv`;
+  const compareCsvUrl = `${API_BASE}/api/export-compare-csv`;
 
   return (
     <section>
@@ -99,15 +95,29 @@ export function CwndChart({ data, variantLabel, simState, compareData }: CwndCha
                 ))
               ) : (
                 <>
-                  <Stat label="VARIANT" value={variantLabel.toUpperCase()} accent />
-                  <Stat label="PEAK"    value={`${maxCwnd.toLocaleString()} B`} />
+                  <Stat label="VARIANT"  value={variantLabel.toUpperCase()} accent />
+                  <Stat label="PEAK"     value={`${maxCwnd.toLocaleString()} B`} />
                   <Stat label="DURATION" value={`${maxTime.toFixed(1)} s`} />
                   <Stat label="SAMPLES"  value={totalSamples.toString()} />
                 </>
               )}
-              {/* playback progress indicator */}
+
               {simState === 'done' && displayCount < totalSamples && (
-                <span className="text-warn ml-auto">▶ {Math.round((displayCount / totalSamples) * 100)}%</span>
+                <span className="text-warn">▶ {Math.round((displayCount / totalSamples) * 100)}%</span>
+              )}
+
+              {/* single run CSV export */}
+              {!isCompare && hasData && simState === 'done' && (
+                <a href={singleCsvUrl} download className="ml-auto btn-ghost text-[10px] py-1.5 px-3">
+                  ↓ export csv
+                </a>
+              )}
+
+              {/* compare run CSV export */}
+              {isCompare && hasData && simState === 'done' && (
+                <a href={compareCsvUrl} download className="ml-auto btn-ghost text-[10px] py-1.5 px-3">
+                  ↓ export compare csv
+                </a>
               )}
             </div>
 
@@ -115,18 +125,11 @@ export function CwndChart({ data, variantLabel, simState, compareData }: CwndCha
               {isCompare ? (
                 <LineChart data={slicedCompare ?? []} margin={{ top: 10, right: 16, left: 16, bottom: 16 }}>
                   <CartesianGrid stroke="#1e242e" strokeDasharray="2 4" />
-                  <XAxis
-                    dataKey="time"
-                    type="number"
-                    domain={[0, 'dataMax']}
-                    tickFormatter={(v: number) => v.toFixed(1)}
-                    stroke="#2a3240" tickLine={false}
-                    label={{ value: 'time (s)', position: 'insideBottom', offset: -2, fill: '#6b7280', fontSize: 10 }}
-                  />
-                  <YAxis
-                    stroke="#2a3240" tickLine={false} width={64}
-                    label={{ value: 'cwnd (bytes)', angle: -90, position: 'insideLeft', fill: '#6b7280', fontSize: 10, dy: 40 }}
-                  />
+                  <XAxis dataKey="time" type="number" domain={[0, 'dataMax']}
+                    tickFormatter={(v: number) => v.toFixed(1)} stroke="#2a3240" tickLine={false}
+                    label={{ value: 'time (s)', position: 'insideBottom', offset: -2, fill: '#6b7280', fontSize: 10 }} />
+                  <YAxis stroke="#2a3240" tickLine={false} width={64}
+                    label={{ value: 'cwnd (bytes)', angle: -90, position: 'insideLeft', fill: '#6b7280', fontSize: 10, dy: 40 }} />
                   <ReferenceLine x={1.1} stroke="#9a4a1f" strokeDasharray="3 3"
                     label={{ value: 'trace start', fill: '#9a4a1f', fontSize: 9, position: 'top' }} />
                   <Tooltip
@@ -135,37 +138,21 @@ export function CwndChart({ data, variantLabel, simState, compareData }: CwndCha
                     formatter={(v: unknown, name: string) => [`${Number(v).toLocaleString()} B`, name]}
                     labelFormatter={(v: unknown) => `t = ${Number(v).toFixed(2)} s`}
                   />
-                  <Legend
-                    wrapperStyle={{ fontFamily: 'JetBrains Mono', fontSize: 10, paddingTop: 8 }}
-                  />
+                  <Legend wrapperStyle={{ fontFamily: 'JetBrains Mono', fontSize: 10, paddingTop: 8 }} />
                   {compareData!.map(e => (
-                    <Line
-                      key={e.variant}
-                      type="monotone"
-                      dataKey={e.variant}
-                      stroke={COMPARE_PALETTE[e.variant]}
-                      strokeWidth={1.6}
-                      dot={false}
-                      isAnimationActive={false}
-                      name={e.label}
-                    />
+                    <Line key={e.variant} type="monotone" dataKey={e.variant}
+                      stroke={COMPARE_PALETTE[e.variant]} strokeWidth={1.6}
+                      dot={false} isAnimationActive={false} name={e.label} />
                   ))}
                 </LineChart>
               ) : (
                 <LineChart data={slicedSingle} margin={{ top: 10, right: 16, left: 16, bottom: 16 }}>
                   <CartesianGrid stroke="#1e242e" strokeDasharray="2 4" />
-                  <XAxis
-                    dataKey="time"
-                    type="number"
-                    domain={[0, 'dataMax']}
-                    tickFormatter={(v: number) => v.toFixed(1)}
-                    stroke="#2a3240" tickLine={false}
-                    label={{ value: 'time (s)', position: 'insideBottom', offset: -2, fill: '#6b7280', fontSize: 10 }}
-                  />
-                  <YAxis
-                    stroke="#2a3240" tickLine={false} width={64}
-                    label={{ value: 'cwnd (bytes)', angle: -90, position: 'insideLeft', fill: '#6b7280', fontSize: 10, dy: 40 }}
-                  />
+                  <XAxis dataKey="time" type="number" domain={[0, 'dataMax']}
+                    tickFormatter={(v: number) => v.toFixed(1)} stroke="#2a3240" tickLine={false}
+                    label={{ value: 'time (s)', position: 'insideBottom', offset: -2, fill: '#6b7280', fontSize: 10 }} />
+                  <YAxis stroke="#2a3240" tickLine={false} width={64}
+                    label={{ value: 'cwnd (bytes)', angle: -90, position: 'insideLeft', fill: '#6b7280', fontSize: 10, dy: 40 }} />
                   <ReferenceLine x={1.1} stroke="#9a4a1f" strokeDasharray="3 3"
                     label={{ value: 'trace start', fill: '#9a4a1f', fontSize: 9, position: 'top' }} />
                   <Tooltip
@@ -175,15 +162,8 @@ export function CwndChart({ data, variantLabel, simState, compareData }: CwndCha
                     formatter={(v: unknown) => [`${Number(v).toLocaleString()} B`, 'cwnd']}
                     labelFormatter={(v: unknown) => `t = ${Number(v).toFixed(2)} s`}
                   />
-                  <Line
-                    type="monotone"
-                    dataKey="cwnd"
-                    stroke="#38bdf8"
-                    strokeWidth={1.6}
-                    dot={false}
-                    isAnimationActive={false}
-                    name={variantLabel}
-                  />
+                  <Line type="monotone" dataKey="cwnd" stroke="#38bdf8" strokeWidth={1.6}
+                    dot={false} isAnimationActive={false} name={variantLabel} />
                 </LineChart>
               )}
             </ResponsiveContainer>
@@ -194,13 +174,10 @@ export function CwndChart({ data, variantLabel, simState, compareData }: CwndCha
   );
 }
 
-// Merge compare entries onto a unified time-keyed array
 function buildMergedData(entries: CompareResultEntry[]): Record<string, number>[] {
-  // Collect all unique time values
   const timeSet = new Set<number>();
   entries.forEach(e => e.cwnd.forEach(p => timeSet.add(p.time)));
   const times = Array.from(timeSet).sort((a, b) => a - b);
-
   return times.map(t => {
     const row: Record<string, number> = { time: t };
     entries.forEach(e => {
@@ -215,10 +192,7 @@ function Stat({ label, value, accent, color }: { label: string; value: string; a
   return (
     <div className="flex flex-col">
       <span className="text-fg-muted">{label}</span>
-      <span
-        className={accent ? 'text-accent text-[13px]' : 'text-fg text-[13px]'}
-        style={color ? { color } : undefined}
-      >
+      <span className={accent ? 'text-accent text-[13px]' : 'text-fg text-[13px]'} style={color ? { color } : undefined}>
         {value}
       </span>
     </div>

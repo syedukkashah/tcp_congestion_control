@@ -14,6 +14,7 @@ import shutil
 import xml.etree.ElementTree as ET
 from flask import Flask, request, jsonify
 from flask_cors import CORS
+from sklearn import metrics
 
 app = Flask(__name__)
 CORS(app)
@@ -26,6 +27,9 @@ WAF = os.path.join(NS3_DIR, "waf")
 # reno  -> ns3::TcpReno  (custom subclass)
 # rest  -> native ns3 types
 VALID_VARIANTS = {"tahoe", "reno", "newreno", "westwood", "bic", "vegas", "hybla"}
+
+last_simulation = {}   # stores last single-run result
+last_compare    = {}   # stores last compare result
 
 def parse_cwnd(path):
     points = []
@@ -156,6 +160,14 @@ def simulate():
     cwnd    = parse_cwnd(prefix + "-cwnd.csv")
     metrics = parse_flowmon(prefix + "-flowmon.xml")
     shutil.rmtree(out_dir, ignore_errors=True)
+    
+    last_simulation['cwnd']    = cwnd
+    last_simulation['metrics'] = metrics
+    last_simulation['variant'] = variant_key
+    last_simulation['params']  = {
+        'bandwidth': bandwidth, 'delay': delay,
+        'queueSize': queue_size, 'duration': duration,
+    }
 
     return jsonify({
         "label":   variant_key.upper(),
@@ -215,6 +227,12 @@ def compare():
             "cwnd":    cwnd,
             "metrics": metrics,
         })
+        
+    last_compare['variants'] = results
+    last_compare['params']   = {
+        'bandwidth': bandwidth, 'delay': delay,
+        'queueSize': queue_size, 'duration': duration,
+    }
 
     return jsonify({
         "variants": results,
@@ -225,6 +243,98 @@ def compare():
             "duration":  duration,
         },
     })
+
+from flask import Response
+ 
+@app.route("/api/export-csv", methods=["GET"])
+def export_csv():
+    if not last_simulation:
+        return jsonify({"error": "No simulation run yet"}), 404
+ 
+    variant = last_simulation.get('variant', 'unknown')
+    cwnd    = last_simulation.get('cwnd', [])
+    metrics = last_simulation.get('metrics', {})
+    params  = last_simulation.get('params', {})
+ 
+    lines = ["time,cwnd"]
+    for pt in cwnd:
+        lines.append("{},{}".format(pt['time'], pt['cwnd']))
+ 
+    lines.append("")
+    lines.append("# variant,{}".format(variant))
+    lines.append("# bandwidth,{}".format(params.get('bandwidth', '')))
+    lines.append("# delay,{}".format(params.get('delay', '')))
+    lines.append("# queueSize,{}".format(params.get('queueSize', '')))
+    lines.append("# duration,{}".format(params.get('duration', '')))
+    lines.append("# throughputMbps,{}".format(metrics.get('throughputMbps', '')))
+    lines.append("# avgDelayMs,{}".format(metrics.get('avgDelayMs', '')))
+    lines.append("# lossRate,{}".format(metrics.get('lossRate', '')))
+    lines.append("# txPackets,{}".format(metrics.get('txPackets', '')))
+    lines.append("# rxPackets,{}".format(metrics.get('rxPackets', '')))
+ 
+    return Response(
+        "\n".join(lines),
+        mimetype="text/csv",
+        headers={"Content-Disposition": "attachment; filename={}-cwnd.csv".format(variant)}
+    )
+ 
+ 
+@app.route("/api/export-compare-csv", methods=["GET"])
+def export_compare_csv():
+    if not last_compare:
+        return jsonify({"error": "No compare run yet"}), 404
+ 
+    variants = last_compare.get('variants', [])
+    params   = last_compare.get('params', {})
+ 
+    if not variants:
+        return jsonify({"error": "No variant data"}), 404
+ 
+    # Build a time-unified CSV with one column per variant
+    variant_ids = [v['variant'] for v in variants]
+ 
+    # Collect all unique times
+    time_set = set()
+    for v in variants:
+        for pt in v['cwnd']:
+            time_set.add(pt['time'])
+    times = sorted(time_set)
+ 
+    # Build lookup: variant -> time -> cwnd
+    lookup = {}
+    for v in variants:
+        lookup[v['variant']] = {pt['time']: pt['cwnd'] for pt in v['cwnd']}
+ 
+    # Header
+    lines = ["time," + ",".join(variant_ids)]
+ 
+    # Rows
+    for t in times:
+        row = [str(t)]
+        for vid in variant_ids:
+            row.append(str(lookup[vid].get(t, '')))
+        lines.append(",".join(row))
+ 
+    # Metadata
+    lines.append("")
+    lines.append("# params: bandwidth={},delay={},queueSize={},duration={}".format(
+        params.get('bandwidth',''), params.get('delay',''),
+        params.get('queueSize',''), params.get('duration','')
+    ))
+    for v in variants:
+        m = v.get('metrics', {})
+        lines.append("# {}: throughput={},delay={},loss={},tx={},rx={}".format(
+            v['variant'],
+            m.get('throughputMbps',''), m.get('avgDelayMs',''),
+            m.get('lossRate',''), m.get('txPackets',''), m.get('rxPackets','')
+        ))
+ 
+    filename = "compare-{}.csv".format("-vs-".join(variant_ids))
+    return Response(
+        "\n".join(lines),
+        mimetype="text/csv",
+        headers={"Content-Disposition": "attachment; filename={}".format(filename)}
+    )
 
 
 if __name__ == "__main__":
