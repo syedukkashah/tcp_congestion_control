@@ -229,11 +229,11 @@ def compare():
             "metrics": metrics,
         })
         
-    last_compare['variants'] = results
-    last_compare['params']   = {
-        'bandwidth': bandwidth, 'delay': delay,
-        'queueSize': queue_size, 'duration': duration,
-    }
+        last_compare['variants'] = results
+        last_compare['params']   = {
+            'bandwidth': bandwidth, 'delay': delay,
+            'queueSize': queue_size, 'duration': duration,
+        }
 
     return jsonify({
         "variants": results,
