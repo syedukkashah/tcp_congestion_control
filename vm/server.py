@@ -132,6 +132,7 @@ def health():
 
 @app.route("/api/simulate", methods=["POST"])
 def simulate():
+    global last_simulation
     body = request.json or {}
     variant_key = body.get("variant", "newreno").lower()
     bandwidth   = body.get("bandwidth", "1Mbps")
@@ -184,6 +185,7 @@ def simulate():
 
 @app.route("/api/compare", methods=["POST"])
 def compare():
+    global last_compare
     body      = request.json or {}
     variants  = body.get("variants",  ["newreno", "westwood"])
     bandwidth = body.get("bandwidth", "1Mbps")
