@@ -1,5 +1,5 @@
 # TCP Congestion Control Simulator
-https://tcpcongestioncontrol.vercel.app/
+Only Frontend Deployed At: https://tcpcongestioncontrol.vercel.app/
 
 **Computer Networks Course Project — FAST-NUCES Karachi**  
 Ibrahim Johar Farooqi (23K-0074) · Syed Ukkashah Ahmed (23K-0055)
