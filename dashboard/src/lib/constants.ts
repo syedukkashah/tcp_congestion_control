@@ -1,6 +1,6 @@
 import type { Variant } from './types';
 
-export const API_BASE = 'http://192.168.100.165:5000';
+export const API_BASE = "http://192.168.100.165:5000/";
 
 export const VARIANTS: { id: Variant; label: string; ns3Class: string; note: string }[] = [
   { id: 'tahoe',    label: 'Tahoe',    ns3Class: 'ns3::TcpTahoe',    note: 'cwnd → 1 on loss' },

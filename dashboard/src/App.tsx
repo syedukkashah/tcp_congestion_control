@@ -6,8 +6,10 @@ import { ConfigPanel } from './components/configpanel';
 import { Topology } from './components/topology';
 import { CwndChart } from './components/cwndchart';
 import { MetricsPanel } from './components/metricspanel';
+import MatlabGraphs from './components/matlabgraphs';
 import { SCENARIOS, DEFAULT_SCENARIO_ID } from './lib/scenarios';
-import { simulate, compare, checkHealth } from './lib/api';
+import { simulate, compare, checkHealth, generateGraphsSingle, generateGraphsCompare } from './lib/api';
+import type { MatlabImages } from './lib/api';
 import type { Variant, CwndPoint, Metrics, CompareResultEntry } from './lib/types';
 
 type SimState = 'idle' | 'running' | 'done' | 'error';
@@ -47,6 +49,11 @@ export default function App() {
   const [simState,     setSimState]     = useState<SimState>('idle');
   const [statusMsg,    setStatusMsg]    = useState<string>('Ready.');
 
+  // MATLAB graph state
+  const [matlabImages,  setMatlabImages]  = useState<MatlabImages | null>(null);
+  const [matlabLoading, setMatlabLoading] = useState(false);
+  const [matlabError,   setMatlabError]   = useState<string | null>(null);
+
   const [apiOnline, setApiOnline] = useState<boolean | null>(null);
   useEffect(() => {
     let alive = true;
@@ -66,11 +73,39 @@ export default function App() {
     if (field === 'duration')  setDuration(value as number);
   };
 
+  const triggerMatlab = (
+    mode: 'single' | 'compare',
+    singleArgs?: { variant: string; cwnd: CwndPoint[]; metrics: Record<string, number> },
+    compareArgs?: CompareResultEntry[]
+  ) => {
+    setMatlabImages(null);
+    setMatlabError(null);
+    setMatlabLoading(true);
+
+    const promise = mode === 'single' && singleArgs
+      ? generateGraphsSingle(singleArgs.variant, singleArgs.cwnd, singleArgs.metrics)
+      : generateGraphsCompare(
+          (compareArgs ?? []).map(v => ({
+            label:   v.label,
+            variant: v.variant,
+            cwnd:    v.cwnd,
+            metrics: v.metrics as unknown as Record<string, number>,
+          }))
+        );
+
+    promise
+      .then(imgs  => setMatlabImages(imgs))
+      .catch(err  => setMatlabError(err instanceof Error ? err.message : String(err)))
+      .finally(() => setMatlabLoading(false));
+  };
+
   const runSim = async () => {
     setSimState('running');
     setCwndData([]);
     setMetrics(null);
     setCompareData(null);
+    setMatlabImages(null);
+    setMatlabError(null);
 
     if (compareMode) {
       setStatusMsg(`Comparing ${variant} vs ${variant2} for ${duration}s …`);
@@ -82,6 +117,9 @@ export default function App() {
         setCompareData(res.variants);
         setSimState('done');
         setStatusMsg(`Compare done · ${res.variants.length} variants · ${first?.cwnd?.length ?? 0} samples`);
+
+        // Trigger MATLAB for compare
+        triggerMatlab('compare', undefined, res.variants);
       } catch (err) {
         setSimState('error');
         setStatusMsg(`Error: ${err instanceof Error ? err.message : String(err)}`);
@@ -94,6 +132,13 @@ export default function App() {
         setMetrics(res.metrics ?? null);
         setSimState('done');
         setStatusMsg(`Done · ${res.cwnd?.length ?? 0} cwnd samples · throughput ${res.metrics?.throughputMbps?.toFixed?.(3) ?? '–'} Mbps`);
+
+        // Trigger MATLAB for single sim
+        triggerMatlab('single', {
+          variant,
+          cwnd:    res.cwnd ?? [],
+          metrics: res.metrics as unknown as Record<string, number>,
+        });
       } catch (err) {
         setSimState('error');
         setStatusMsg(`Error: ${err instanceof Error ? err.message : String(err)}`);
@@ -156,6 +201,12 @@ export default function App() {
           metrics={metrics}
           duration={duration}
           compareData={compareData}
+        />
+
+        <MatlabGraphs
+          images={matlabImages}
+          loading={matlabLoading}
+          error={matlabError}
         />
       </main>
 
