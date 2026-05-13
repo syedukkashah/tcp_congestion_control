@@ -135,7 +135,7 @@ export function CwndChart({ data, variantLabel, simState, compareData }: CwndCha
                   <Tooltip
                     contentStyle={{ background: '#0a0d12', border: '1px solid #2a3240', fontFamily: 'JetBrains Mono', fontSize: 11, borderRadius: 0 }}
                     labelStyle={{ color: '#9ca3af' }}
-                    formatter={(v: unknown, name: string) => [`${Number(v).toLocaleString()} B`, name]}
+                    formatter={(v: unknown, name: unknown) => [`${Number(v).toLocaleString()} B`, String(name ?? '')]}
                     labelFormatter={(v: unknown) => `t = ${Number(v).toFixed(2)} s`}
                   />
                   <Legend wrapperStyle={{ fontFamily: 'JetBrains Mono', fontSize: 10, paddingTop: 8 }} />
